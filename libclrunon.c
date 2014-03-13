@@ -34,6 +34,7 @@ typedef cl_int (CL_API_CALL *clGetDeviceIDs_PTR)(cl_platform_id, cl_device_type,
 typedef cl_int (CL_API_CALL *clGetDeviceInfo_PTR)(cl_device_id, cl_device_info, size_t, void *, size_t *);
 
 static pthread_once_t once = PTHREAD_ONCE_INIT;
+static bool have_target = false;
 static cl_platform_id target_platform;
 static cl_device_id target_device;
 static cl_device_type target_device_type;
@@ -66,17 +67,19 @@ static void die_cl(const char *func, int err)
     die("Call to %s failed with code %d\n", func, err);
 }
 
-static unsigned int device_num(void)
+// Returns true if a device number was found, false if it was not set
+static bool device_num(unsigned int *out)
 {
     const char *s = getenv(ENVAR_NAME);
     char *end;
 
     if (s == NULL)
-        die(ENVAR_NAME " was not set");
+        return false;
     long v = strtol(s, &end, 10);
     if (end == s || *end || v < 0 || (unsigned long) v > UINT_MAX)
         die(ENVAR_NAME " was not set to a valid value\n");
-    return v;
+    *out = v;
+    return true;
 }
 
 static void initialize(void)
@@ -85,8 +88,12 @@ static void initialize(void)
     INIT_WRAPPED_FUNCTION(clGetDeviceIDs);
     INIT_SIMPLE_FUNCTION(clGetDeviceInfo);
 
-    unsigned int target = device_num();
+    unsigned int target = 0;
     unsigned int found = 0;
+    bool requested = device_num(&target);
+
+    if (!requested)
+        printf("No device requested. Available devices are:\n\n");
 
     cl_int err;
     cl_uint num_platforms;
@@ -99,26 +106,46 @@ static void initialize(void)
     if (err != CL_SUCCESS)
         die_cl("clGetPlatformIDs", err);
 
-    for (cl_uint i = 0; i < num_platforms; i++)
+    for (cl_uint i = 0; i < num_platforms && !have_target; i++)
     {
         cl_uint num_devices = 0;
         err = clGetDeviceIDs_real(
             platforms[i], CL_DEVICE_TYPE_ALL,
             0, NULL, &num_devices);
         if (err == CL_DEVICE_NOT_FOUND)
-            continue; // just no devices of this type
+            continue; // just no devices of this type, not a real error
         if (err != CL_SUCCESS)
             die_cl("clGetDeviceIDs", err);
 
-        if (target < found + num_devices)
-        {
-            cl_device_id devices[num_devices];
-            err = clGetDeviceIDs_real(
-                platforms[i], CL_DEVICE_TYPE_ALL,
-                num_devices, devices, NULL);
-            if (err != CL_SUCCESS)
-                die_cl("clGetDeviceIDs", err);
+        cl_device_id devices[num_devices];
+        err = clGetDeviceIDs_real(
+            platforms[i], CL_DEVICE_TYPE_ALL,
+            num_devices, devices, NULL);
+        if (err != CL_SUCCESS)
+            die_cl("clGetDeviceIDs", err);
 
+        if (!requested)
+        {
+            for (cl_uint j = 0; j < num_devices; j++)
+            {
+                size_t name_size;
+                err = clGetDeviceInfo_real(
+                    devices[j], CL_DEVICE_NAME,
+                    0, NULL, &name_size);
+                if (err != CL_SUCCESS)
+                    die_cl("clGetDeviceInfo", err);
+                char name[name_size];
+                err = clGetDeviceInfo_real(
+                    devices[j], CL_DEVICE_NAME,
+                    name_size, name, NULL);
+                if (err != CL_SUCCESS)
+                    die_cl("clGetDeviceInfo", err);
+
+                printf("%u: %s\n", (unsigned int) (found + j), name);
+            }
+        }
+        else if (target < found + num_devices)
+        {
             target_device = devices[target - found];
             target_platform = platforms[i];
             err = clGetDeviceInfo_real(
@@ -128,18 +155,25 @@ static void initialize(void)
                 NULL);
             if (err != CL_SUCCESS)
                 die_cl("clGetDeviceInfo", err);
-            return;
+            have_target = true;
         }
         found += num_devices;
     }
 
-    die("Requested device %u but only %u found\n", target, found);
+    if (!requested)
+        printf("\nNo device filtering will be done.\n\n");
+
+    if (requested && !have_target)
+        die("Requested device %u but only %u found\n", target, found);
 }
 
 CL_API_ENTRY cl_int CL_API_CALL clGetPlatformIDs(
     cl_uint num_entries, cl_platform_id *platforms, cl_uint *num_platforms)
 {
     pthread_once(&once, initialize);
+
+    if (!have_target)
+        return clGetPlatformIDs_real(num_entries, platforms, num_platforms);
 
     if (num_entries == 0 && platforms != NULL)
         return CL_INVALID_VALUE;
@@ -161,6 +195,9 @@ CL_API_ENTRY cl_int CL_API_CALL clGetDeviceIDs(
     cl_uint *num_devices)
 {
     pthread_once(&once, initialize);
+
+    if (!have_target)
+        return clGetDeviceIDs_real(platform, device_type, num_entries, devices, num_devices);
 
     if (platform != target_platform)
         return CL_INVALID_PLATFORM;

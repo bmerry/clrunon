@@ -1,0 +1,20 @@
+#!/bin/bash
+while [ $# -gt 1 ]; do
+    case "$1" in
+        -d) shift
+            export CLRUNON_DEVICE_NUM="$1"
+            shift
+            ;;
+        -*) echo "Unrecognized option $1" 1>&2
+            exit 1
+            ;;
+        *) break
+            ;;
+    esac
+done
+if [ $# -lt 1 ]; then
+    echo "Error: must specify a program to run" 1>&2
+    exit 1
+fi
+export LD_PRELOAD="$(dirname $0)/libclrunon.so:$LD_PRELOAD"
+exec "$@"
