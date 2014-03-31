@@ -32,6 +32,7 @@
 typedef cl_int (CL_API_CALL *clGetPlatformIDs_PTR)(cl_uint, cl_platform_id *, cl_uint *);
 typedef cl_int (CL_API_CALL *clGetDeviceIDs_PTR)(cl_platform_id, cl_device_type, cl_uint, cl_device_id *, cl_uint *);
 typedef cl_int (CL_API_CALL *clGetDeviceInfo_PTR)(cl_device_id, cl_device_info, size_t, void *, size_t *);
+typedef cl_context (CL_API_CALL *clCreateContext_PTR)(const cl_context_properties *, cl_uint, const cl_device_id *, void (CL_CALLBACK *)(const char *, const void *, size_t, void *), void *, cl_int *);
 
 static pthread_once_t once = PTHREAD_ONCE_INIT;
 static bool have_target = false;
@@ -42,6 +43,7 @@ static cl_device_type target_device_type;
 static clGetPlatformIDs_PTR clGetPlatformIDs_real;
 static clGetDeviceIDs_PTR clGetDeviceIDs_real;
 static clGetDeviceInfo_PTR clGetDeviceInfo_real;
+static clCreateContext_PTR clCreateContext_real;
 
 #define INIT_FUNCTION(name, handle) \
     do { \
@@ -87,6 +89,7 @@ static void initialize(void)
     INIT_WRAPPED_FUNCTION(clGetPlatformIDs);
     INIT_WRAPPED_FUNCTION(clGetDeviceIDs);
     INIT_SIMPLE_FUNCTION(clGetDeviceInfo);
+    INIT_SIMPLE_FUNCTION(clCreateContext);
 
     unsigned int target = 0;
     unsigned int found = 0;
@@ -187,6 +190,24 @@ CL_API_ENTRY cl_int CL_API_CALL clGetPlatformIDs(
     return CL_SUCCESS;
 }
 
+static bool valid_device_type(cl_device_type device_type)
+{
+    switch (device_type)
+    {
+    case CL_DEVICE_TYPE_DEFAULT:
+    case CL_DEVICE_TYPE_CPU:
+    case CL_DEVICE_TYPE_GPU:
+    case CL_DEVICE_TYPE_ACCELERATOR:
+#ifdef CL_DEVICE_TYPE_CUSTOM
+    case CL_DEVICE_TYPE_CUSTOM:
+#endif
+    case CL_DEVICE_TYPE_ALL:
+        return true;
+    default:
+        return false;
+    }
+}
+
 CL_API_ENTRY cl_int CL_API_CALL clGetDeviceIDs(
     cl_platform_id platform,
     cl_device_type device_type,
@@ -201,26 +222,16 @@ CL_API_ENTRY cl_int CL_API_CALL clGetDeviceIDs(
 
     if (platform != target_platform)
         return CL_INVALID_PLATFORM;
-    switch (device_type)
-    {
-    case CL_DEVICE_TYPE_DEFAULT:
-    case CL_DEVICE_TYPE_CPU:
-    case CL_DEVICE_TYPE_GPU:
-    case CL_DEVICE_TYPE_ACCELERATOR:
-#ifdef CL_DEVICE_TYPE_CUSTOM
-    case CL_DEVICE_TYPE_CUSTOM:
-#endif
-    case CL_DEVICE_TYPE_ALL:
-        break;
-    default:
+
+    if (!valid_device_type(device_type))
         return CL_INVALID_DEVICE_TYPE;
-    }
 
     if (num_entries == 0 && devices != NULL)
         return CL_INVALID_VALUE;
     if (devices == NULL && num_devices == NULL)
         return CL_INVALID_VALUE;
-    if (!(device_type & target_device_type))
+    // Make the chosen device the default one
+    if (device_type != CL_DEVICE_TYPE_DEFAULT && !(device_type & target_device_type))
         return CL_DEVICE_NOT_FOUND;
 
     if (devices != NULL)
@@ -228,4 +239,50 @@ CL_API_ENTRY cl_int CL_API_CALL clGetDeviceIDs(
     if (num_devices != NULL)
         *num_devices = 1;
     return CL_SUCCESS;
+}
+
+static void set_error(cl_int *errcode_ret, cl_int error)
+{
+    if (errcode_ret != NULL)
+        *errcode_ret = error;
+}
+
+CL_API_ENTRY cl_context clCreateContextFromType(
+    const cl_context_properties *properties,
+    cl_device_type device_type,
+    void (CL_CALLBACK *pfn_notify)(const char *, const void *, size_t, void *),
+    void *user_data,
+    cl_int *errcode_ret)
+{
+    /* We can't just wrap clCreateContextFromType, because the platform may
+     * have multiple devices of this type. So we have to implement the
+     * selection logic ourselves.
+     */
+
+    /* Check that platform is correct, if given */
+    if (properties)
+    {
+        for (size_t i = 0; properties[i]; i += 2)
+            if (properties[i] == CL_CONTEXT_PLATFORM
+                && (cl_platform_id) properties[i + 1] != target_platform)
+            {
+                set_error(errcode_ret, CL_INVALID_PLATFORM);
+                return NULL;
+            }
+    }
+
+    if (!valid_device_type(device_type))
+    {
+        set_error(errcode_ret, CL_INVALID_DEVICE_TYPE);
+        return NULL;
+    }
+
+    if (device_type != CL_DEVICE_TYPE_DEFAULT && !(device_type & target_device_type))
+    {
+        set_error(errcode_ret, CL_DEVICE_NOT_FOUND);
+        return NULL;
+    }
+
+    /* Other errors are also errors from clCreateContext */
+    return clCreateContext_real(properties, 1, &target_device, pfn_notify, user_data, errcode_ret);
 }
