@@ -1,6 +1,29 @@
 #!/bin/bash
-while [ $# -gt 1 ]; do
+
+function usage()
+{
+    cat <<EOF
+Usage: clrunon [-t type] [-d num] program [args...]
+EOF
+}
+
+while [ $# -ge 1 ]; do
+    if [ $# -eq 1 ]; then
+        case "$1" in
+            -t | -d)
+                echo "$1: requires an argument" 1>&2
+                exit 1
+                ;;
+        esac
+    fi
     case "$1" in
+        -h) usage
+            exit 0
+            ;;
+        -t) shift
+            export CLRUNON_DEVICE_TYPE="$1"
+            shift
+            ;;
         -d) shift
             export CLRUNON_DEVICE_NUM="$1"
             shift
@@ -14,6 +37,7 @@ while [ $# -gt 1 ]; do
 done
 if [ $# -lt 1 ]; then
     echo "Error: must specify a program to run" 1>&2
+    usage
     exit 1
 fi
 export LD_PRELOAD="$(dirname $0)/libclrunon.so:$LD_PRELOAD"

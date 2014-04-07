@@ -19,6 +19,7 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdarg.h>
@@ -26,7 +27,8 @@
 #include <limits.h>
 
 #define NAME "clrunon"
-#define ENVAR_NAME "CLRUNON_DEVICE_NUM"
+#define DEVICE_NUM_VAR "CLRUNON_DEVICE_NUM"
+#define DEVICE_TYPE_VAR "CLRUNON_DEVICE_TYPE"
 
 typedef cl_int (CL_API_CALL *clGetPlatformIDs_PTR)(cl_uint, cl_platform_id *, cl_uint *);
 typedef cl_int (CL_API_CALL *clGetDeviceIDs_PTR)(cl_platform_id, cl_device_type, cl_uint, cl_device_id *, cl_uint *);
@@ -71,15 +73,35 @@ static void die_cl(const char *func, int err)
 // Returns true if a device number was found, false if it was not set
 static bool device_num(unsigned int *out)
 {
-    const char *s = getenv(ENVAR_NAME);
+    const char *s = getenv(DEVICE_NUM_VAR);
     char *end;
 
     if (s == NULL)
         return false;
     long v = strtol(s, &end, 10);
     if (end == s || *end || v < 0 || (unsigned long) v > UINT_MAX)
-        die(ENVAR_NAME " was not set to a valid value\n");
+        die(DEVICE_NUM_VAR " was not set to a valid value\n");
     *out = v;
+    return true;
+}
+
+// Returns true if a device type was found, false if it was not set
+static bool device_type(cl_device_type *out)
+{
+    const char *s = getenv(DEVICE_TYPE_VAR);
+
+    if (s == NULL)
+        return false;
+    else if (0 == strcmp(s, "cpu"))
+        *out = CL_DEVICE_TYPE_CPU;
+    else if (0 == strcmp(s, "gpu"))
+        *out = CL_DEVICE_TYPE_GPU;
+#ifdef CL_DEVICE_TYPE_ACCELERATOR
+    else if (0 == strcmp(s, "accelerator"))
+        *out = CL_DEVICE_TYPE_ACCELERATOR;
+#endif
+    else
+        die(DEVICE_TYPE_VAR " was not set to a valid value");
     return true;
 }
 
@@ -90,9 +112,12 @@ static void initialize(void)
     INIT_SIMPLE_FUNCTION(clGetDeviceInfo);
     INIT_SIMPLE_FUNCTION(clCreateContext);
 
-    unsigned int target = 0;
+    cl_device_type req_type = CL_DEVICE_TYPE_ALL;
+    unsigned int req_num = 0;
     unsigned int found = 0;
-    bool requested = device_num(&target);
+    bool have_num = device_num(&req_num);
+    bool have_type = device_type(&req_type);
+    bool requested = have_num || have_type;
 
     if (!requested)
         printf("No device requested. Available devices are:\n\n");
@@ -112,7 +137,7 @@ static void initialize(void)
     {
         cl_uint num_devices = 0;
         err = clGetDeviceIDs_real(
-            platforms[i], CL_DEVICE_TYPE_ALL,
+            platforms[i], req_type,
             0, NULL, &num_devices);
         if (err == CL_DEVICE_NOT_FOUND)
             continue; // just no devices of this type, not a real error
@@ -121,7 +146,7 @@ static void initialize(void)
 
         cl_device_id devices[num_devices];
         err = clGetDeviceIDs_real(
-            platforms[i], CL_DEVICE_TYPE_ALL,
+            platforms[i], req_type,
             num_devices, devices, NULL);
         if (err != CL_SUCCESS)
             die_cl("clGetDeviceIDs", err);
@@ -146,9 +171,9 @@ static void initialize(void)
                 printf("%u: %s\n", (unsigned int) (found + j), name);
             }
         }
-        else if (target < found + num_devices)
+        else if (req_num < found + num_devices)
         {
-            target_device = devices[target - found];
+            target_device = devices[req_num - found];
             target_platform = platforms[i];
             err = clGetDeviceInfo_real(
                 target_device, CL_DEVICE_TYPE,
@@ -166,7 +191,7 @@ static void initialize(void)
         printf("\nNo device filtering will be done.\n\n");
 
     if (requested && !have_target)
-        die("Requested device %u but only %u found\n", target, found);
+        die("Requested device %u but only %u found\n", req_num, found);
 }
 
 CL_API_ENTRY cl_int CL_API_CALL clGetPlatformIDs(
