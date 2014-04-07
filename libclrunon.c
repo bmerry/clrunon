@@ -22,7 +22,6 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdarg.h>
-#include <stdnoreturn.h>
 #include <stddef.h>
 #include <limits.h>
 
@@ -54,7 +53,7 @@ static clCreateContext_PTR clCreateContext_real;
 #define INIT_WRAPPED_FUNCTION(name) INIT_FUNCTION(name, RTLD_NEXT)
 #define INIT_SIMPLE_FUNCTION(name) INIT_FUNCTION(name, RTLD_DEFAULT)
 
-static _Noreturn void die(const char *format, ...)
+static __attribute__((noreturn)) void die(const char *format, ...)
 {
     va_list ap;
     va_start(ap, format);

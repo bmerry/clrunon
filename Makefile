@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -O2 -std=c11 -D_GNU_SOURCE -pthread -fPIC
+CFLAGS = -Wall -O2 -std=c99 -D_GNU_SOURCE -pthread -fPIC
 LDFLAGS = -shared -Wl,-soname,libclrunon.so -lpthread -ldl
 TARGETS = libclrunon.so
 
