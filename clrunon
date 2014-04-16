@@ -40,5 +40,7 @@ if [ $# -lt 1 ]; then
     usage
     exit 1
 fi
-export LD_PRELOAD="$(dirname $0)/libclrunon.so:$LD_PRELOAD"
+lib="$(dirname "$0")/libclrunon.so"
+[ -x /bin/readlink ] && lib="$(readlink -m "$lib")"
+export LD_PRELOAD="$lib:$LD_PRELOAD"
 exec "$@"
