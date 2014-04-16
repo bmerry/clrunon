@@ -34,6 +34,7 @@ typedef cl_int (CL_API_CALL *clGetPlatformIDs_PTR)(cl_uint, cl_platform_id *, cl
 typedef cl_int (CL_API_CALL *clGetDeviceIDs_PTR)(cl_platform_id, cl_device_type, cl_uint, cl_device_id *, cl_uint *);
 typedef cl_int (CL_API_CALL *clGetDeviceInfo_PTR)(cl_device_id, cl_device_info, size_t, void *, size_t *);
 typedef cl_context (CL_API_CALL *clCreateContext_PTR)(const cl_context_properties *, cl_uint, const cl_device_id *, void (CL_CALLBACK *)(const char *, const void *, size_t, void *), void *, cl_int *);
+typedef cl_context (CL_API_CALL *clCreateContextFromType_PTR)(const cl_context_properties *, cl_device_type, void (CL_CALLBACK *)(const char *, const void *, size_t, void *), void *, cl_int *);
 
 static pthread_once_t once = PTHREAD_ONCE_INIT;
 static bool have_target = false;
@@ -45,6 +46,7 @@ static clGetPlatformIDs_PTR clGetPlatformIDs_real;
 static clGetDeviceIDs_PTR clGetDeviceIDs_real;
 static clGetDeviceInfo_PTR clGetDeviceInfo_real;
 static clCreateContext_PTR clCreateContext_real;
+static clCreateContextFromType_PTR clCreateContextFromType_real;
 
 #define INIT_FUNCTION(name, handle) \
     do { \
@@ -111,6 +113,7 @@ static void initialize(void)
     INIT_WRAPPED_FUNCTION(clGetDeviceIDs);
     INIT_SIMPLE_FUNCTION(clGetDeviceInfo);
     INIT_SIMPLE_FUNCTION(clCreateContext);
+    INIT_WRAPPED_FUNCTION(clCreateContextFromType);
 
     cl_device_type req_type = CL_DEVICE_TYPE_ALL;
     unsigned int req_num = 0;
@@ -278,6 +281,10 @@ CL_API_ENTRY cl_context clCreateContextFromType(
     void *user_data,
     cl_int *errcode_ret)
 {
+    if (!have_target)
+    {
+        return clCreateContextFromType_real(properties, device_type, pfn_notify, user_data, errcode_ret);
+    }
     /* We can't just wrap clCreateContextFromType, because the platform may
      * have multiple devices of this type. So we have to implement the
      * selection logic ourselves.
